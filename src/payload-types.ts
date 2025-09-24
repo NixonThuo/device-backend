@@ -70,6 +70,7 @@ export interface Config {
     users: User;
     devices: Device;
     media: Media;
+    passes: Pass;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
@@ -79,6 +80,7 @@ export interface Config {
     users: UsersSelect<false> | UsersSelect<true>;
     devices: DevicesSelect<false> | DevicesSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
+    passes: PassesSelect<false> | PassesSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
     'payload-migrations': PayloadMigrationsSelect<false> | PayloadMigrationsSelect<true>;
@@ -151,7 +153,32 @@ export interface Device {
   deviceType: 'Phone' | 'Tablet' | 'Laptop' | 'Other';
   serialNumber: string;
   owner: number | User;
-  status?: ('Active' | 'Pending Approval' | 'Deactivated') | null;
+  status?: ('active' | 'pending' | 'deactivated') | null;
+  /**
+   * All passes issued for this device
+   */
+  passes?: (number | Pass)[] | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "passes".
+ */
+export interface Pass {
+  id: number;
+  label?: string | null;
+  device: number | Device;
+  /**
+   * Start date must be today or later.
+   */
+  startDate: string;
+  /**
+   * End date must be after start date.
+   */
+  endDate: string;
+  status?: ('active' | 'expired' | 'revoked') | null;
+  isCurrentlyValid?: boolean | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -192,6 +219,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'media';
         value: number | Media;
+      } | null)
+    | ({
+        relationTo: 'passes';
+        value: number | Pass;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -269,6 +300,7 @@ export interface DevicesSelect<T extends boolean = true> {
   serialNumber?: T;
   owner?: T;
   status?: T;
+  passes?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -289,6 +321,20 @@ export interface MediaSelect<T extends boolean = true> {
   height?: T;
   focalX?: T;
   focalY?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "passes_select".
+ */
+export interface PassesSelect<T extends boolean = true> {
+  label?: T;
+  device?: T;
+  startDate?: T;
+  endDate?: T;
+  status?: T;
+  isCurrentlyValid?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
