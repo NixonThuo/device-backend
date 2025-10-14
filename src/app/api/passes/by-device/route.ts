@@ -11,7 +11,11 @@ async function ensurePayloadInit() {
   }
 }
 
-const allowedOrigins = ['http://localhost:3001', 'http://192.168.1.123:3001']
+const allowedOrigins = [
+  'http://localhost:3001',
+  'http://192.168.1.123:3001',
+  'http://192.168.1.90:3001',
+]
 
 function withCORS(response: NextResponse, req: NextRequest) {
   const origin = req.headers.get('origin')
