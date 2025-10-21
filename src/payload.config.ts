@@ -16,7 +16,7 @@ const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
 
 export default buildConfig({
-  cors: ['http://localhost:3001', 'http://192.168.1.123:3001'],
+  cors: ['http://localhost:3001', 'http://192.168.1.123:3001', 'http://192.168.1.90:3001'],
   graphQL: {
     disable: false,
   },
