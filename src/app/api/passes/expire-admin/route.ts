@@ -28,12 +28,26 @@ export async function POST(req: NextRequest) {
     })
   } catch (e) {}
 
-  // Secure with Payload JWT: require Authorization: JWT <token>
+  // Secure with Payload JWT: prefer Authorization header, but also accept
+  // a session token provided via common cookie names for browser requests.
   const authHeader = req.headers.get('authorization') || ''
-  const token = authHeader.replace(/^Bearer\s+/i, '').replace(/^JWT\s+/i, '') || null
+  let token = authHeader.replace(/^Bearer\s+/i, '').replace(/^JWT\s+/i, '') || null
+  if (!token) {
+    try {
+      // Try common cookie names used by Payload or clients
+      token =
+        req.cookies.get('payload')?.value ||
+        req.cookies.get('payloadToken')?.value ||
+        req.cookies.get('token')?.value ||
+        null
+    } catch (e) {
+      // ignore cookie parse errors and fall through to missing token handling
+    }
+  }
+
   if (!token) {
     return withCORS(
-      NextResponse.json({ error: 'Unauthorized: missing Authorization header' }, { status: 401 }),
+      NextResponse.json({ error: 'Unauthorized: missing Authorization token' }, { status: 401 }),
       req,
     )
   }
@@ -63,6 +77,10 @@ export async function POST(req: NextRequest) {
           const jwt = await import('jsonwebtoken')
           decoded = (jwt as any).verify(token, secret)
         } catch (err) {
+          // Log the verification error server-side to aid debugging.
+          try {
+            logError('expire-admin token verify failed (jsonwebtoken fallback)', String(err))
+          } catch (e) {}
           return withCORS(
             NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
             req,
@@ -70,6 +88,10 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch (err) {
+      // Log verifier failure for diagnostics
+      try {
+        logError('expire-admin token verify failed (verifier)', String(err))
+      } catch (e) {}
       return withCORS(
         NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
         req,
