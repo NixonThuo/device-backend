@@ -4,9 +4,10 @@ import payloadConfig from '../../../../payload.config'
 import { withCORS, preflightResponse } from '../../../../../src/lib/cors'
 import { logInfo, logError } from '../../../../../src/lib/logger'
 
-// Admin-only endpoint to expire passes permanently. Requires header:
-//   x-admin-secret: <value of process.env.ADMIN_SECRET>
-// It will find active passes with endDate < now and set status = 'expired'.
+// Admin-only endpoint to expire passes permanently.
+// Uses the normal Payload authentication (Authorization: JWT <token> or a valid
+// session cookie). It will find active passes with endDate < now and set
+// status = 'expired'.
 
 let payloadInitialized = false
 async function ensurePayloadInit() {
