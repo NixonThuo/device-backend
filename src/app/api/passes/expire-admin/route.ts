@@ -39,18 +39,35 @@ export async function POST(req: NextRequest) {
 
   try {
     await ensurePayloadInit()
-    // Attempt to verify token using Payload API (best-effort). If Payload
-    // exposes a verify method, use it to get the user id. Otherwise deny.
+
+    // Verify token: prefer Payload's verifier, otherwise fall back to jsonwebtoken
     let decoded: any = null
     try {
       const verifier = (payload as any).verifyJWT ?? (payload as any).verifyToken
-      if (typeof verifier !== 'function') {
-        return withCORS(
-          NextResponse.json({ error: 'Server misconfigured: cannot verify JWT' }, { status: 500 }),
-          req,
-        )
+      if (typeof verifier === 'function') {
+        decoded = await verifier.call(payload, token)
+      } else {
+        // Fallback: try verifying JWT directly using jsonwebtoken and PAYLOAD_SECRET
+        const secret = process.env.PAYLOAD_SECRET
+        if (!secret) {
+          return withCORS(
+            NextResponse.json(
+              { error: 'Server misconfigured: cannot verify JWT' },
+              { status: 500 },
+            ),
+            req,
+          )
+        }
+        try {
+          const jwt = await import('jsonwebtoken')
+          decoded = (jwt as any).verify(token, secret)
+        } catch (err) {
+          return withCORS(
+            NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
+            req,
+          )
+        }
       }
-      decoded = await verifier.call(payload, token)
     } catch (err) {
       return withCORS(
         NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
@@ -74,6 +91,7 @@ export async function POST(req: NextRequest) {
         req,
       )
     }
+
     const nowIso = new Date().toISOString()
     // find active passes that ended before now
     const toExpire = await payload.find({
