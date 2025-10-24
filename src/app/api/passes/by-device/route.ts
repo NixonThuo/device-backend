@@ -28,65 +28,31 @@ export async function GET(req: NextRequest) {
 
   try {
     await ensurePayloadInit()
-    // Before returning passes, expire any active passes whose endDate is in the past.
-    // This keeps the stored status in sync with actual validity.
-    const nowIso = new Date().toISOString()
-    const toExpire = await payload.find({
-      collection: 'passes',
-      depth: 0,
-      limit: 1000,
-      where: {
-        and: [
-          { device: { equals: deviceId } },
-          { status: { equals: 'active' } },
-          { endDate: { less_than: nowIso } },
-        ],
-      },
-    })
-
-    if (toExpire?.docs?.length) {
-      // Update each expired pass to status 'expired'. Include start/end dates
-      // formatted as ISO date strings (YYYY-MM-DD) to satisfy field-level
-      // validation, and use overrideAccess to allow server-side updates.
-      // Wrap each update in try/catch and log failures for easier debugging.
-      const { logInfo, logError } = await import('../../../../../src/lib/logger')
-      await Promise.all(
-        toExpire.docs.map(async (p: any) => {
-          const startStr = p.startDate ? new Date(p.startDate).toISOString() : undefined
-          const endStr = p.endDate ? new Date(p.endDate).toISOString() : undefined
-          const updateData: any = { status: 'expired' }
-          if (startStr) updateData.startDate = startStr
-          if (endStr) updateData.endDate = endStr
-          try {
-            logInfo('Expiring pass', { id: p.id, updateData })
-            return await payload.update({
-              collection: 'passes',
-              id: p.id,
-              data: updateData,
-              overrideAccess: true,
-            })
-          } catch (err) {
-            // Log full context to help debug validation errors
-            logError('Failed to expire pass', {
-              id: p.id,
-              original: p,
-              updateData,
-              error: String(err),
-            })
-            // rethrow so the outer catch returns error to client
-            throw err
-          }
-        }),
-      )
-    }
+    // Fetch passes then mark expired ones in-memory before returning.
+    // We avoid writing back to the DB here to prevent validation errors
+    // during on-read maintenance. If you want permanent updates, run a
+    // separate maintenance job or endpoint that handles validation explicitly.
 
     // Now fetch and return current passes for the device (including updated statuses)
-    const passes = await payload.find({
+    const passesRes = await payload.find({
       collection: 'passes',
       where: { device: { equals: deviceId } },
       depth: 1,
     })
-    return withCORS(NextResponse.json(passes.docs), req)
+    const now = new Date()
+    const docs = (passesRes.docs || []).map((p: any) => {
+      try {
+        const end = p?.endDate ? new Date(p.endDate) : undefined
+        if (p?.status === 'active' && end && end < now) {
+          // return a copy with status adjusted to 'expired' for the response
+          return { ...p, status: 'expired', isCurrentlyValid: false }
+        }
+      } catch (e) {
+        // ignore parsing errors and return original doc
+      }
+      return p
+    })
+    return withCORS(NextResponse.json(docs), req)
   } catch (err) {
     return withCORS(
       NextResponse.json({ error: 'Failed to fetch passes', details: String(err) }, { status: 500 }),

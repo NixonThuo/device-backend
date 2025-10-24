@@ -142,6 +142,8 @@ export const Passes: CollectionConfig = {
       admin: { description: 'Start date must be today or later.' },
       validate: (value, opts: any) => {
         if (!value) return 'Start date is required.'
+        // Allow skipping validation when server-side maintenance requests set disableValidation
+        if (opts?.req?.disableValidation) return true
         // Only enforce the "not before today" rule for new documents
         if (!isNewDocument(opts)) return true
         const today = new Date()
@@ -161,8 +163,10 @@ export const Passes: CollectionConfig = {
       type: 'date',
       required: true,
       admin: { description: 'End date must be after start date.' },
-      validate: (value, { data }) => {
+      validate: (value, { data, req }: any) => {
         if (!value) return 'End date is required.'
+        // Allow skipping validation for maintenance requests
+        if (req?.disableValidation) return true
         if (!(data as any)?.startDate) return true
         const start = new Date((data as any).startDate)
         const end = new Date(value)
