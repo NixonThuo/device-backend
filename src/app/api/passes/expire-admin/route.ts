@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import payload from 'payload'
 import payloadConfig from '../../../../payload.config'
+import { withCORS, preflightResponse } from '../../../../../src/lib/cors'
+import { logInfo, logError } from '../../../../../src/lib/logger'
 
 // Admin-only endpoint to expire passes permanently. Requires header:
 //   x-admin-secret: <value of process.env.ADMIN_SECRET>
@@ -15,13 +17,23 @@ async function ensurePayloadInit() {
 }
 
 export async function POST(req: NextRequest) {
+  // Log request entry and headers (only a few headers to avoid noise)
+  try {
+    logInfo('expire-admin invoked', {
+      method: 'POST',
+      origin: req.headers.get('origin'),
+      contentType: req.headers.get('content-type'),
+      authorizationPresent: !!req.headers.get('authorization'),
+    })
+  } catch (e) {}
+
   // Secure with Payload JWT: require Authorization: JWT <token>
   const authHeader = req.headers.get('authorization') || ''
   const token = authHeader.replace(/^Bearer\s+/i, '').replace(/^JWT\s+/i, '') || null
   if (!token) {
-    return NextResponse.json(
-      { error: 'Unauthorized: missing Authorization header' },
-      { status: 401 },
+    return withCORS(
+      NextResponse.json({ error: 'Unauthorized: missing Authorization header' }, { status: 401 }),
+      req,
     )
   }
 
@@ -33,25 +45,34 @@ export async function POST(req: NextRequest) {
     try {
       const verifier = (payload as any).verifyJWT ?? (payload as any).verifyToken
       if (typeof verifier !== 'function') {
-        return NextResponse.json(
-          { error: 'Server misconfigured: cannot verify JWT' },
-          { status: 500 },
+        return withCORS(
+          NextResponse.json({ error: 'Server misconfigured: cannot verify JWT' }, { status: 500 }),
+          req,
         )
       }
       decoded = await verifier.call(payload, token)
     } catch (err) {
-      return NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 })
+      return withCORS(
+        NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
+        req,
+      )
     }
 
     const userId = decoded?.id
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized: token missing user id' }, { status: 401 })
+      return withCORS(
+        NextResponse.json({ error: 'Unauthorized: token missing user id' }, { status: 401 }),
+        req,
+      )
     }
 
     // Ensure user is admin
     const user = await payload.findByID({ collection: 'users', id: userId, depth: 0 })
     if (!user || user.role !== 'admin') {
-      return NextResponse.json({ error: 'Forbidden: admin role required' }, { status: 403 })
+      return withCORS(
+        NextResponse.json({ error: 'Forbidden: admin role required' }, { status: 403 }),
+        req,
+      )
     }
     const nowIso = new Date().toISOString()
     // find active passes that ended before now
@@ -86,11 +107,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ expired: results.length, details: results })
+    logInfo('expire-admin finished', { expired: results.length })
+    return withCORS(NextResponse.json({ expired: results.length, details: results }), req)
   } catch (err) {
-    return NextResponse.json(
-      { error: 'Failed to expire passes', details: String(err) },
-      { status: 500 },
+    logError('expire-admin failed', String(err))
+    return withCORS(
+      NextResponse.json(
+        { error: 'Failed to expire passes', details: String(err) },
+        { status: 500 },
+      ),
+      req,
     )
   }
+}
+
+export async function OPTIONS(req: NextRequest) {
+  try {
+    logInfo('expire-admin preflight (OPTIONS) received', { origin: req.headers.get('origin') })
+  } catch (e) {}
+  return preflightResponse(req)
 }
