@@ -44,6 +44,32 @@ export async function GET(req: NextRequest) {
 
   try {
     await ensurePayloadInit()
+    // Before returning passes, expire any active passes whose endDate is in the past.
+    // This keeps the stored status in sync with actual validity.
+    const nowIso = new Date().toISOString()
+    const toExpire = await payload.find({
+      collection: 'passes',
+      depth: 0,
+      limit: 1000,
+      where: {
+        and: [
+          { device: { equals: deviceId } },
+          { status: { equals: 'active' } },
+          { endDate: { less_than: nowIso } },
+        ],
+      },
+    })
+
+    if (toExpire?.docs?.length) {
+      // Update each expired pass to status 'expired'
+      await Promise.all(
+        toExpire.docs.map((p: any) =>
+          payload.update({ collection: 'passes', id: p.id, data: { status: 'expired' } }),
+        ),
+      )
+    }
+
+    // Now fetch and return current passes for the device (including updated statuses)
     const passes = await payload.find({
       collection: 'passes',
       where: { device: { equals: deviceId } },
