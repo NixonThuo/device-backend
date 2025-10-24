@@ -61,10 +61,21 @@ export async function GET(req: NextRequest) {
     })
 
     if (toExpire?.docs?.length) {
-      // Update each expired pass to status 'expired'
+      // Update each expired pass to status 'expired'. Include start/end dates
+      // to satisfy field-level validation, and use overrideAccess to allow
+      // server-side updates.
       await Promise.all(
         toExpire.docs.map((p: any) =>
-          payload.update({ collection: 'passes', id: p.id, data: { status: 'expired' } }),
+          payload.update({
+            collection: 'passes',
+            id: p.id,
+            data: {
+              status: 'expired',
+              startDate: p.startDate,
+              endDate: p.endDate,
+            },
+            overrideAccess: true,
+          }),
         ),
       )
     }
