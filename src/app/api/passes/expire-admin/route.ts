@@ -28,92 +28,26 @@ export async function POST(req: NextRequest) {
     })
   } catch (e) {}
 
-  // Require that the caller is an authenticated admin. We accept a Payload
-  // JWT via Authorization header (Bearer/JWT) or via common session cookie
-  // names. Verify the token with Payload's verifier if available, fallback
-  // to verifying the JWT with PAYLOAD_SECRET.
-  //
-  // If verification fails or the user is not admin, respond 401/403.
-  const authHeader = req.headers.get('authorization') || ''
-  let token = authHeader.replace(/^Bearer\s+/i, '').replace(/^JWT\s+/i, '') || null
-  if (!token) {
-    try {
-      token =
-        req.cookies.get('payload')?.value ||
-        req.cookies.get('payloadToken')?.value ||
-        req.cookies.get('token')?.value ||
-        null
-    } catch (e) {
-      // ignore cookie parse errors
+  // Also write a concise console log for quick local inspection. Mask the
+  // Authorization header to avoid leaking tokens in logs.
+  try {
+    const headersObj: Record<string, string> = {}
+    for (const [k, v] of req.headers.entries()) {
+      headersObj[k] = k.toLowerCase() === 'authorization' ? '[REDACTED]' : String(v)
     }
-  }
+    console.log('expire-admin request received', {
+      method: req.method,
+      url: req.url,
+      origin: req.headers.get('origin'),
+      headers: headersObj,
+    })
+  } catch (e) {}
 
-  if (!token) {
-    return withCORS(
-      NextResponse.json({ error: 'Unauthorized: missing Authorization token' }, { status: 401 }),
-      req,
-    )
-  }
-
+  // No authentication: this route is intentionally public and will run the
+  // expiry operation without checking tokens or session cookies. Callers may
+  // still be rate-limited or protected by external network controls.
   try {
     await ensurePayloadInit()
-
-    // Verify token
-    let decoded: any = null
-    try {
-      const verifier = (payload as any).verifyJWT ?? (payload as any).verifyToken
-      if (typeof verifier === 'function') {
-        decoded = await verifier.call(payload, token)
-      } else {
-        const secret = process.env.PAYLOAD_SECRET
-        if (!secret) {
-          return withCORS(
-            NextResponse.json(
-              { error: 'Server misconfigured: cannot verify JWT' },
-              { status: 500 },
-            ),
-            req,
-          )
-        }
-        try {
-          const jwt = await import('jsonwebtoken')
-          decoded = (jwt as any).verify(token, secret)
-        } catch (err) {
-          try {
-            logError('expire-admin token verify failed (jsonwebtoken fallback)', String(err))
-          } catch (e) {}
-          return withCORS(
-            NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
-            req,
-          )
-        }
-      }
-    } catch (err) {
-      try {
-        logError('expire-admin token verify failed (verifier)', String(err))
-      } catch (e) {}
-      return withCORS(
-        NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
-        req,
-      )
-    }
-
-    const userId = decoded?.id
-    if (!userId) {
-      return withCORS(
-        NextResponse.json({ error: 'Unauthorized: token missing user id' }, { status: 401 }),
-        req,
-      )
-    }
-
-    // Ensure user is admin
-    const user = await payload.findByID({ collection: 'users', id: userId, depth: 0 })
-    if (!user || user.role !== 'admin') {
-      return withCORS(
-        NextResponse.json({ error: 'Forbidden: admin role required' }, { status: 403 }),
-        req,
-      )
-    }
 
     const nowIso = new Date().toISOString()
     // find active passes that ended before now
