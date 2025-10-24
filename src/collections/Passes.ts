@@ -69,8 +69,13 @@ export const Passes: CollectionConfig = {
       type: 'date',
       required: true,
       admin: { description: 'Start date must be today or later.' },
-      validate: (value) => {
+      validate: (value, opts: any) => {
+        const originalDoc = opts?.originalDoc
         if (!value) return 'Start date is required.'
+        // If updating an existing document, allow the original start date
+        // to remain even if it's in the past. Only enforce the "not before
+        // today" rule for new documents.
+        if (originalDoc) return true
         const today = new Date()
         today.setHours(0, 0, 0, 0)
         const start = new Date(value)
