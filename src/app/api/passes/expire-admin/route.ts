@@ -28,92 +28,11 @@ export async function POST(req: NextRequest) {
     })
   } catch (e) {}
 
-  // Secure with Payload JWT: prefer Authorization header, but also accept
-  // a session token provided via common cookie names for browser requests.
-  const authHeader = req.headers.get('authorization') || ''
-  let token = authHeader.replace(/^Bearer\s+/i, '').replace(/^JWT\s+/i, '') || null
-  if (!token) {
-    try {
-      // Try common cookie names used by Payload or clients
-      token =
-        req.cookies.get('payload')?.value ||
-        req.cookies.get('payloadToken')?.value ||
-        req.cookies.get('token')?.value ||
-        null
-    } catch (e) {
-      // ignore cookie parse errors and fall through to missing token handling
-    }
-  }
-
-  if (!token) {
-    return withCORS(
-      NextResponse.json({ error: 'Unauthorized: missing Authorization token' }, { status: 401 }),
-      req,
-    )
-  }
-
+  // No authentication: this route is intentionally public and will run the
+  // expiry operation without checking tokens or session cookies. Callers may
+  // still be rate-limited or protected by external network controls.
   try {
     await ensurePayloadInit()
-
-    // Verify token: prefer Payload's verifier, otherwise fall back to jsonwebtoken
-    let decoded: any = null
-    try {
-      const verifier = (payload as any).verifyJWT ?? (payload as any).verifyToken
-      if (typeof verifier === 'function') {
-        decoded = await verifier.call(payload, token)
-      } else {
-        // Fallback: try verifying JWT directly using jsonwebtoken and PAYLOAD_SECRET
-        const secret = process.env.PAYLOAD_SECRET
-        if (!secret) {
-          return withCORS(
-            NextResponse.json(
-              { error: 'Server misconfigured: cannot verify JWT' },
-              { status: 500 },
-            ),
-            req,
-          )
-        }
-        try {
-          const jwt = await import('jsonwebtoken')
-          decoded = (jwt as any).verify(token, secret)
-        } catch (err) {
-          // Log the verification error server-side to aid debugging.
-          try {
-            logError('expire-admin token verify failed (jsonwebtoken fallback)', String(err))
-          } catch (e) {}
-          return withCORS(
-            NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
-            req,
-          )
-        }
-      }
-    } catch (err) {
-      // Log verifier failure for diagnostics
-      try {
-        logError('expire-admin token verify failed (verifier)', String(err))
-      } catch (e) {}
-      return withCORS(
-        NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 }),
-        req,
-      )
-    }
-
-    const userId = decoded?.id
-    if (!userId) {
-      return withCORS(
-        NextResponse.json({ error: 'Unauthorized: token missing user id' }, { status: 401 }),
-        req,
-      )
-    }
-
-    // Ensure user is admin
-    const user = await payload.findByID({ collection: 'users', id: userId, depth: 0 })
-    if (!user || user.role !== 'admin') {
-      return withCORS(
-        NextResponse.json({ error: 'Forbidden: admin role required' }, { status: 403 }),
-        req,
-      )
-    }
 
     const nowIso = new Date().toISOString()
     // find active passes that ended before now
