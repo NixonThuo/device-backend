@@ -52,10 +52,8 @@ export async function GET(req: NextRequest) {
       const { logInfo, logError } = await import('../../../../../src/lib/logger')
       await Promise.all(
         toExpire.docs.map(async (p: any) => {
-          const startStr = p.startDate
-            ? new Date(p.startDate).toISOString().slice(0, 10)
-            : undefined
-          const endStr = p.endDate ? new Date(p.endDate).toISOString().slice(0, 10) : undefined
+          const startStr = p.startDate ? new Date(p.startDate).toISOString() : undefined
+          const endStr = p.endDate ? new Date(p.endDate).toISOString() : undefined
           const updateData: any = { status: 'expired' }
           if (startStr) updateData.startDate = startStr
           if (endStr) updateData.endDate = endStr
