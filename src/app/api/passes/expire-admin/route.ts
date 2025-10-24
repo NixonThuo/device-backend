@@ -15,19 +15,44 @@ async function ensurePayloadInit() {
 }
 
 export async function POST(req: NextRequest) {
-  const adminSecret = req.headers.get('x-admin-secret')
-  if (!process.env.ADMIN_SECRET) {
+  // Secure with Payload JWT: require Authorization: JWT <token>
+  const authHeader = req.headers.get('authorization') || ''
+  const token = authHeader.replace(/^Bearer\s+/i, '').replace(/^JWT\s+/i, '') || null
+  if (!token) {
     return NextResponse.json(
-      { error: 'Server misconfigured: ADMIN_SECRET not set' },
-      { status: 500 },
+      { error: 'Unauthorized: missing Authorization header' },
+      { status: 401 },
     )
-  }
-  if (adminSecret !== process.env.ADMIN_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   try {
     await ensurePayloadInit()
+    // Attempt to verify token using Payload API (best-effort). If Payload
+    // exposes a verify method, use it to get the user id. Otherwise deny.
+    let decoded: any = null
+    try {
+      const verifier = (payload as any).verifyJWT ?? (payload as any).verifyToken
+      if (typeof verifier !== 'function') {
+        return NextResponse.json(
+          { error: 'Server misconfigured: cannot verify JWT' },
+          { status: 500 },
+        )
+      }
+      decoded = await verifier.call(payload, token)
+    } catch (err) {
+      return NextResponse.json({ error: 'Unauthorized: invalid token' }, { status: 401 })
+    }
+
+    const userId = decoded?.id
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized: token missing user id' }, { status: 401 })
+    }
+
+    // Ensure user is admin
+    const user = await payload.findByID({ collection: 'users', id: userId, depth: 0 })
+    if (!user || user.role !== 'admin') {
+      return NextResponse.json({ error: 'Forbidden: admin role required' }, { status: 403 })
+    }
     const nowIso = new Date().toISOString()
     // find active passes that ended before now
     const toExpire = await payload.find({
