@@ -1,10 +1,81 @@
 // src/collections/Passes.ts
 import type { CollectionConfig, Where } from 'payload'
+import { logInfo, logError } from '../lib/logger'
 
 function addDays(date: Date, days: number) {
   const d = new Date(date)
   d.setDate(d.getDate() + days)
   return d
+}
+
+// Helpers
+function formatDateISO(date: unknown) {
+  if (!date) return undefined
+  try {
+    const d = new Date(String(date))
+    if (Number.isNaN(d.getTime())) return undefined
+    return d.toISOString().slice(0, 10)
+  } catch {
+    return undefined
+  }
+}
+
+function generateRandomLabel(length = 8) {
+  return Math.random()
+    .toString(36)
+    .substring(2, 2 + length)
+    .toUpperCase()
+}
+
+function isNewDocument(opts?: any) {
+  // payload passes originalDoc in hooks/validators when updating
+  return !opts?.originalDoc
+}
+
+async function ensureNoOverlap(data: any, req: any, originalDoc: any) {
+  if (!data?.device) return
+  if (data?.status === 'revoked') return
+
+  const currentId = data?.id ?? originalDoc?.id
+  const start = new Date(data.startDate)
+  const end = new Date(data.endDate)
+
+  const deviceId =
+    typeof data.device === 'string' || typeof data.device === 'number'
+      ? data.device
+      : data.device?.id
+  if (!deviceId) return
+
+  const result = await req.payload.find({
+    collection: 'passes',
+    depth: 0,
+    limit: 1,
+    where: {
+      and: [
+        { device: { equals: deviceId } },
+        { status: { equals: 'active' } },
+        { startDate: { less_than: end.toISOString() } },
+        { endDate: { greater_than: start.toISOString() } },
+        ...(currentId ? [{ id: { not_equals: currentId } }] : []),
+      ],
+    },
+  })
+
+  if (result?.docs?.length) {
+    // Log context so devs can trace back which records caused overlap
+    try {
+      logError('Overlap detected when creating/updating pass', {
+        deviceId,
+        dataStart: data.startDate,
+        dataEnd: data.endDate,
+        conflictingPassId: result.docs[0]?.id,
+        currentId,
+      })
+    } catch (e) {
+      // swallow logging errors
+    }
+    throw new Error('An overlapping active pass already exists for this device.')
+  }
 }
 
 // Access helper: users can access passes for devices they own.
@@ -70,16 +141,18 @@ export const Passes: CollectionConfig = {
       required: true,
       admin: { description: 'Start date must be today or later.' },
       validate: (value, opts: any) => {
-        const originalDoc = opts?.originalDoc
         if (!value) return 'Start date is required.'
-        // If updating an existing document, allow the original start date
-        // to remain even if it's in the past. Only enforce the "not before
-        // today" rule for new documents.
-        if (originalDoc) return true
+        // Only enforce the "not before today" rule for new documents
+        if (!isNewDocument(opts)) return true
         const today = new Date()
         today.setHours(0, 0, 0, 0)
-        const start = new Date(value)
-        if (start < today) return 'Start date cannot be before today.'
+        const start = new Date(String(value))
+        if (start < today) {
+          try {
+            logError('startDate validation failed', { value, opts })
+          } catch (e) {}
+          return 'Start date cannot be before today.'
+        }
         return true
       },
     },
@@ -93,7 +166,12 @@ export const Passes: CollectionConfig = {
         if (!(data as any)?.startDate) return true
         const start = new Date((data as any).startDate)
         const end = new Date(value)
-        if (end <= start) return 'End date must be after start date.'
+        if (end <= start) {
+          try {
+            logError('endDate validation failed', { start: (data as any)?.startDate, end: value })
+          } catch (e) {}
+          return 'End date must be after start date.'
+        }
         return true
       },
     },
@@ -118,9 +196,7 @@ export const Passes: CollectionConfig = {
       // Auto-generate label based on device
       async ({ data }) => {
         if (!data) return data
-        // Generate a random 8-character alphanumeric label
-        const randomLabel = Math.random().toString(36).substring(2, 10).toUpperCase()
-        data.label = randomLabel
+        data.label = generateRandomLabel(8)
         return data
       },
       // No auto-compute of endDate based on type (type field removed)
@@ -129,39 +205,7 @@ export const Passes: CollectionConfig = {
 
       // Prevent overlapping active passes with date overlap (type field removed)
       async ({ data, req, originalDoc }) => {
-        if (!data?.device) return data
-        if (data?.status === 'revoked') return data
-
-        const currentId = data?.id ?? originalDoc?.id
-        const start = new Date(data.startDate)
-        const end = new Date(data.endDate)
-
-        // Only run the query if device is a valid string or number
-        const deviceId =
-          typeof data.device === 'string' || typeof data.device === 'number'
-            ? data.device
-            : data.device?.id
-
-        if (!deviceId) return data
-
-        const result = await req.payload.find({
-          collection: 'passes',
-          depth: 0,
-          limit: 1,
-          where: {
-            and: [
-              { device: { equals: deviceId } },
-              { status: { equals: 'active' } },
-              { startDate: { less_than: end.toISOString() } },
-              { endDate: { greater_than: start.toISOString() } },
-              ...(currentId ? [{ id: { not_equals: currentId } }] : []),
-            ],
-          },
-        })
-
-        if (result?.docs?.length) {
-          throw new Error('An overlapping active pass already exists for this device.')
-        }
+        await ensureNoOverlap(data, req, originalDoc)
         return data
       },
     ],

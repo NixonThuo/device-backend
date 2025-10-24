@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import payload from 'payload'
 import payloadConfig from '../../../../payload.config'
+import { withCORS, preflightResponse } from '../../../../../src/lib/cors'
 
 // Ensure Payload is initialized before any operation
 let payloadInitialized = false
@@ -11,26 +12,9 @@ async function ensurePayloadInit() {
   }
 }
 
-const allowedOrigins = [
-  'http://localhost:3001',
-  'http://192.168.1.123:3001',
-  'http://192.168.1.90:3001',
-]
-
-function withCORS(response: NextResponse, req: NextRequest) {
-  const origin = req.headers.get('origin')
-  if (origin && allowedOrigins.includes(origin)) {
-    response.headers.set('Access-Control-Allow-Origin', origin)
-    response.headers.set('Vary', 'Origin')
-    response.headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS')
-    response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-  }
-  return response
-}
-
 export async function OPTIONS(req: NextRequest) {
-  // Preflight CORS support
-  return withCORS(new NextResponse(null, { status: 204 }), req)
+  // Preflight CORS support (delegated to shared helper)
+  return preflightResponse(req)
 }
 
 // GET /api/passes/by-device?device=<deviceId>
@@ -64,8 +48,10 @@ export async function GET(req: NextRequest) {
       // Update each expired pass to status 'expired'. Include start/end dates
       // formatted as ISO date strings (YYYY-MM-DD) to satisfy field-level
       // validation, and use overrideAccess to allow server-side updates.
+      // Wrap each update in try/catch and log failures for easier debugging.
+      const { logInfo, logError } = await import('../../../../../src/lib/logger')
       await Promise.all(
-        toExpire.docs.map((p: any) => {
+        toExpire.docs.map(async (p: any) => {
           const startStr = p.startDate
             ? new Date(p.startDate).toISOString().slice(0, 10)
             : undefined
@@ -73,12 +59,25 @@ export async function GET(req: NextRequest) {
           const updateData: any = { status: 'expired' }
           if (startStr) updateData.startDate = startStr
           if (endStr) updateData.endDate = endStr
-          return payload.update({
-            collection: 'passes',
-            id: p.id,
-            data: updateData,
-            overrideAccess: true,
-          })
+          try {
+            logInfo('Expiring pass', { id: p.id, updateData })
+            return await payload.update({
+              collection: 'passes',
+              id: p.id,
+              data: updateData,
+              overrideAccess: true,
+            })
+          } catch (err) {
+            // Log full context to help debug validation errors
+            logError('Failed to expire pass', {
+              id: p.id,
+              original: p,
+              updateData,
+              error: String(err),
+            })
+            // rethrow so the outer catch returns error to client
+            throw err
+          }
         }),
       )
     }
