@@ -43,6 +43,36 @@ export async function POST(req: NextRequest) {
     })
   } catch (e) {}
 
+  // Try to decode the JWT payload (without verifying) to log the user's role
+  // if present. This is purely for debugging/logging and does not grant access.
+  try {
+    let roleToLog = 'anonymous'
+    const authHeader = req.headers.get('authorization') || ''
+    let token = authHeader.replace(/^Bearer\s+/i, '').replace(/^JWT\s+/i, '') || null
+    if (!token) {
+      token =
+        req.cookies.get('payload')?.value ||
+        req.cookies.get('payloadToken')?.value ||
+        req.cookies.get('token')?.value ||
+        null
+    }
+    if (token) {
+      const parts = token.split('.')
+      if (parts.length >= 2) {
+        const b = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+        // pad base64 string
+        const pad = b.length % 4
+        const padded = pad === 2 ? b + '==' : pad === 3 ? b + '=' : pad === 0 ? b : b + '==='
+        const payloadJson = Buffer.from(padded, 'base64').toString('utf8')
+        const payload = JSON.parse(payloadJson)
+        roleToLog = payload?.role || payload?.data?.role || payload?.user?.role || 'unknown'
+      }
+    }
+    console.log('expire-admin requester role:', roleToLog)
+  } catch (e) {
+    // ignore any decode errors
+  }
+
   // No authentication: this route is intentionally public and will run the
   // expiry operation without checking tokens or session cookies. Callers may
   // still be rate-limited or protected by external network controls.
